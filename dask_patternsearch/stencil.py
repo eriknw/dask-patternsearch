@@ -81,7 +81,7 @@ class RightHandedSimplexStencil(object):
         self.point_intern = {}
         self.point_cache = {}
         self.max_halvings = max_halvings
-        self.gridsize = 2**(-max_halvings-1)
+        self.gridsize = 2.**(-max_halvings-1)
         r = np.arange(dims + 1)
         self.indexers = np.stack([
             np.concatenate([[i], r[:i], r[i+1:]])

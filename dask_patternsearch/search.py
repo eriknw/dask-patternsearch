@@ -173,24 +173,24 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
             point.stop_time = time()
             processing_queue.append((point, result))
 
-        # Process one result
-        if (
-            processing_queue
-            and (cur_added >= min_new_submit or stencil_index >= max_stencil_size)
-        ):
-            point, result = processing_queue.popleft()
-            results[point] = result
-            point.result = result
-            if result < cur_cost:
-                point.is_accepted = True
-                # The stencil prefers negative directions, so this is the correct sign
-                diff = point.point - cur_point.point
-                orientation = np.where(diff, np.copysign(orientation, diff), orientation)
-                new_point = point
-            elif not is_finished:
-                if point in contract_conditions:
-                    contract_conditions.remove(point)
-                if not contract_conditions and stencil_index > 2 * dims:
-                    is_contraction = True
+        # Process results (up to one accepted point)
+        if cur_added >= min_new_submit or stencil_index >= max_stencil_size:
+            while processing_queue:
+                point, result = processing_queue.popleft()
+                results[point] = result
+                point.result = result
+                if result < cur_cost:
+                    point.is_accepted = True
+                    # The stencil prefers negative directions, so this is the correct sign
+                    diff = point.point - cur_point.point
+                    orientation = np.where(diff, np.copysign(orientation, diff), orientation)
+                    new_point = point
+                    break
+                elif not is_finished:
+                    if point in contract_conditions:
+                        contract_conditions.remove(point)
+                    if not contract_conditions and stencil_index > 2 * dims:
+                        is_contraction = True
+                        break
     return cur_point, results
 
