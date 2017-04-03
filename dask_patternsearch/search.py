@@ -42,7 +42,8 @@ def randomize_stencil(dims, it):
 def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_new_submit=0, randomize=False, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None):
     # bound=None, low_memory_stencil=False
     if queue_size is None:
-        queue_size = sum(client.ncores().values())
+        ncores = client.ncores()
+        queue_size = sum(ncores.values()) + len(ncores)
     if min_queue_size is None:
         min_queue_size = queue_size // 2
     if max_stencil_size is None:
