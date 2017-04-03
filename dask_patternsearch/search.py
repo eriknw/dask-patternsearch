@@ -5,9 +5,8 @@ import math
 import distributed
 import numpy as np
 
-from collections import deque
 from time import time
-from toolz import concat, take
+from toolz import concat, cons, take
 
 from .stencil import RightHandedSimplexStencil
 
@@ -66,7 +65,9 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
         end_time = time() + max_time
     results = {}
     running = {}
-    processing_queue = deque()
+    processing = []
+    next_point = None
+    next_cost = None
 
     # Begin from initial point
     future = client.submit(func, cur_point.point)
@@ -75,7 +76,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
     results[cur_point] = None
     is_contraction = True
 
-    while not is_finished or running:
+    while not is_finished or running or next_point is not None:
         if max_time is not None and time() > end_time:
             is_finished = True
 
@@ -110,7 +111,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
                 and (
                     len(running) < min_queue_size
                     or cur_added < min_new_submit
-                    or not processing_queue and as_completed.queue.empty()
+                    or next_point is None and as_completed.queue.empty()
                 )
             ):
                 try:
@@ -158,25 +159,43 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
             future, result = next(as_completed)
             point = running.pop(future)
             point.stop_time = time()
-            processing_queue.append((point, result))
+            if next_point is None:
+                next_point = point
+                next_cost = result
+            elif result < next_cost:
+                processing.append((next_point, next_cost))
+                next_point = point
+                next_cost = result
+            else:
+                processing.append((point, result))
 
         # Wait for next result if necessary
         if (
             len(running) >= queue_size
             or (
-                not processing_queue
+                next_point is None
                 and (is_finished or stencil_index >= max_stencil_size)
             )
         ):
             future, result = next(as_completed)
             point = running.pop(future)
             point.stop_time = time()
-            processing_queue.append((point, result))
+            if next_point is None:
+                next_point = point
+                next_cost = result
+            elif result < next_cost:
+                processing.append((next_point, next_cost))
+                next_point = point
+                next_cost = result
+            else:
+                processing.append((point, result))
 
-        # Process results (up to one accepted point)
-        if cur_added >= min_new_submit or stencil_index >= max_stencil_size:
-            while processing_queue:
-                point, result = processing_queue.popleft()
+        # Process all results
+        # Be greedy: the new point will be the result with the lowest cost.
+        # It's possible one could want a different policy to better explore
+        # around multiple minima.
+        if next_point is not None and (cur_added >= min_new_submit or stencil_index >= max_stencil_size):
+            for point, result in cons((next_point, next_cost), processing):
                 results[point] = result
                 point.result = result
                 if result < cur_cost:
@@ -185,12 +204,13 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
                     diff = point.point - cur_point.point
                     orientation = np.where(diff, np.copysign(orientation, diff), orientation)
                     new_point = point
-                    break
-                elif not is_finished:
+                elif new_point is not None and not is_finished:
                     if point in contract_conditions:
                         contract_conditions.remove(point)
                     if not contract_conditions and stencil_index > 2 * dims:
                         is_contraction = True
-                        break
+            next_point = None
+            next_cost = None
+            processing.clear()
     return cur_point, results
 
