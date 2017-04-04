@@ -155,30 +155,15 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
             if is_contraction:
                 continue
 
-        # Collect all completed tasks
-        while not as_completed.queue.empty():
-            future, result = next(as_completed)
-            point = running.pop(future)
-            point.stop_time = time()
-            if next_point is None:
-                next_point = point
-                next_cost = result
-            elif result < next_cost:
-                processing.append((next_point, next_cost))
-                next_point = point
-                next_cost = result
-            else:
-                processing.append((point, result))
-
-        # Wait for next result if necessary
-        if (
+        # Collect all completed tasks, or wait for one if nothing else to do
+        block = (
             len(running) >= queue_size
             or (
                 next_point is None
                 and (is_finished or stencil_index >= max_stencil_size)
             )
-        ):
-            future, result = next(as_completed)
+        )
+        for future, result in as_completed.next_batch(block=block):
             point = running.pop(future)
             point.stop_time = time()
             if next_point is None:
