@@ -215,7 +215,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
                 is_contraction = True
             next_point = None
             next_cost = None
-            processing.clear()
+            processing[:] = []
         elif next_point is None and stencil_index >= max_stencil_size and not running and not is_finished:
             # Nothing running, nothing to process, and nothing to submit, so contract
             is_contraction = True
