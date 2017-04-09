@@ -40,13 +40,79 @@ def randomize_stencil(dims, it):
     return concat(randomize_chunk(i, it) for i in itertools.count(2*dims, dims))
 
 
-def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None):
+def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None):
+    """ Perform an asynchronous pattern search to minimize a function.
+
+    A pattern of trial points is created around the current best point.
+    No derivatives are calculated.  Instead, this pattern shrinks as the
+    algorithm converges.  Tasks and results are submitted and collected
+    fully asynchronously, and the current best point is updated as soon
+    as possible.  This algorithm should be able to scale to use any
+    number of cores, although there are practical limitations such as
+    scheduler overhead and memory usage.  For example, using 100,000
+    cores to minimize a 100-D objective function should work just fine.
+
+    Parameters
+    ----------
+    client : dask.distributed.Client
+        A client to a ``dask.distributed`` scheduler.
+    func : callable
+        The objective function to be minimized.  Must be in the form
+        ``func(x, *args)`` where ``x`` is a 1-D array and ``args`` is
+        a tuple of extra arguments passed to the objective function.
+    x0 : ndarray
+        1-D array; the initial guess.
+    stepsize : ndarray
+        1-D array; the initial step sizes for each dimension.  This may
+        be repeatedly halved or doubled as the algorithm proceeds.  It
+        is best to choose step sizes larger than the features you want
+        the algorithm to step over.
+    args : tuple, optional
+        Extra arguments passed to the objective function.
+    max_queue_size : int or None, optional
+        Maximum number of active tasks to have submitted to the client.
+        Default is the total number of threads plus the total number
+        of worker processes of the the client's cluster.  This default
+        is chosen to maximize occupancy of available cores, but, in
+        general, ``max_queue_size`` does not need to be related to
+        compute resources at all.  Choosing a larger ``max_queue_size``
+        is the best way to improve robustness of the algorithm.
+    min_queue_size : int or None, optional
+        Minimum number of active tasks to have submitted to the client.
+        Default is ``max_queue_size // 2``.
+    min_new_submit : int, optional
+        The minimum number of trial points to submit after a new best
+        point has been found before accepting an even better point.
+        This may help when there are multiple minima being explored.
+    randomize : bool, optional
+        Whether to randomize the order of trial points (default True).
+    max_stencil_size: int or None, optional
+        The maximum size of the stencil used to create the pattern of
+        trial points around the current best point.  Default unlimited.
+    stopratio : float, optional
+        Termination condition: stop after the step size has been reduced
+        by this amount.  Must be between 0 and 1.  Default is 0.01.
+    max_tasks : int or None, optional
+        Termination condition: stop after this many tasks have been
+        completed.  Default unlimited.
+    max_time : float or None, optional
+        Termination condition: stop submitting new tasks after this many
+        seconds have passed.  Default unlimited.
+
+    Returns
+    -------
+    best_point: Point
+        The optimization result.  ``best_point.point`` is the ndarray.
+    results: dict
+        All evalulated points and their scores.
+
+    """
     # bound=None, low_memory_stencil=False
-    if queue_size is None:
+    if max_queue_size is None:
         ncores = client.ncores()
-        queue_size = sum(ncores.values()) + len(ncores)
+        max_queue_size = sum(ncores.values()) + len(ncores)
     if min_queue_size is None:
-        min_queue_size = max(1, queue_size // 2)
+        min_queue_size = max(1, max_queue_size // 2)
     if max_stencil_size is None:
         max_stencil_size = 1e9
     dims = len(stepsize)
@@ -58,7 +124,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
         return np.round(x / gridsize) * gridsize
 
     orientation = np.ones(dims)
-    cur_point = Point(to_grid(x), -1)
+    cur_point = Point(to_grid(x0), -1)
     cur_point.start_time = time()
     cur_point.parent = cur_point
     cur_cost = result = np.inf
@@ -75,7 +141,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
     next_cost = None
 
     # Begin from initial point
-    future = client.submit(func, cur_point.point)
+    future = client.submit(func, cur_point.point, *args)
     as_completed = distributed.as_completed([future], with_results=True)
     running[future] = cur_point
     results[cur_point] = None
@@ -115,7 +181,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
         # Fill task queue with trial points while waiting for results
         if not is_finished:
             while (
-                len(running) < queue_size
+                len(running) < max_queue_size
                 and stencil_index < max_stencil_size
                 and (
                     len(running) < min_queue_size
@@ -152,7 +218,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
                 if has_result is False:
                     trial_point.parent = cur_point
                     trial_point.start_time = time()
-                    future = client.submit(func, trial_point.point)
+                    future = client.submit(func, trial_point.point, *args)
                     as_completed.add(future)
                     running[future] = trial_point
                     results[trial_point] = None
@@ -166,7 +232,7 @@ def search(client, func, x, stepsize, queue_size=None, min_queue_size=None, min_
         # Collect all completed tasks, or wait for one if nothing else to do
         if running:
             block = (
-                len(running) >= queue_size
+                len(running) >= max_queue_size
                 or (
                     next_point is None
                     and (is_finished or stencil_index >= max_stencil_size)

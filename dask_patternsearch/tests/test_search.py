@@ -21,10 +21,10 @@ def test_convergence_2d_simple(loop):
             best, results = search(client, sphere, x0, stepsize, stopratio=stopratio)
             assert (np.abs(best.point) < 2*stopratio).all()
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, queue_size=20)
+            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_queue_size=20)
             assert (np.abs(best.point) < 2*stopratio).all()
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, queue_size=1)
+            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_queue_size=1)
             assert (np.abs(best.point) < 2*stopratio).all()
 
             best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, min_new_submit=4)
