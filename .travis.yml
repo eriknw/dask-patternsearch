@@ -1,0 +1,34 @@
+language: python
+sudo: false
+
+env:
+    matrix:
+        - PYTHON=2.7
+        - PYTHON=3.4
+        - PYTHON=3.5
+        - PYTHON=3.6
+
+install:
+    # Install conda
+    - wget http://repo.continuum.io/miniconda/Miniconda-latest-Linux-x86_64.sh -O miniconda.sh
+    - bash miniconda.sh -b -p $HOME/miniconda
+    - export PATH="$HOME/miniconda/bin:$PATH"
+    - conda config --set always_yes yes --set changeps1 no
+    - conda update -q conda
+
+    # Install dependencies
+    - conda create -q -n test-environment python=$PYTHON
+    - source activate test-environment
+    - conda install -q -c conda-forge dask distributed toolz pytest flake8
+    - pip install -q git+https://github.com/dask/dask.git --upgrade
+    - pip install -q git+https://github.com/dask/distributed.git --upgrade
+
+    # Install dask-patternsearch
+    - pip install --no-deps -e .
+
+script:
+    - py.test
+
+notifications:
+    email: False
+
