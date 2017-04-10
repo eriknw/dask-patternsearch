@@ -178,6 +178,10 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
             new_point = None
             new_cost = None
             cur_stepsize = to_grid(orientation * stepsize / 2.**cur_point.halvings)
+            if integer_dimensions is not None:
+                # Change the minimum step size for integers to 1
+                cur_stepsize[int_dims & (cur_stepsize < 0) & (cur_stepsize > -1)] = -1
+                cur_stepsize[int_dims & (cur_stepsize > 0) & (cur_stepsize < 1)] = 1
             cur_added = 0
             contract_conditions.clear()
             it = stencil.generate_stencil_points()
