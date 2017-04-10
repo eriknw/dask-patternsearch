@@ -40,7 +40,7 @@ def randomize_stencil(dims, it):
     return concat(randomize_chunk(i, it) for i in itertools.count(2*dims, dims))
 
 
-def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None):
+def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None, integer_dimensions=None):
     """ Perform an asynchronous pattern search to minimize a function.
 
     A pattern of trial points is created around the current best point.
@@ -98,6 +98,8 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
     max_time : float or None, optional
         Termination condition: stop submitting new tasks after this many
         seconds have passed.  Default unlimited.
+    integer_dimensions : array-like or None, optional
+        1-D array; specify the indices of integer dimensions.
 
     Returns
     -------
@@ -115,10 +117,18 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
         min_queue_size = max(1, max_queue_size // 2)
     if max_stencil_size is None:
         max_stencil_size = 1e9
+    x0 = np.array(x0)
+    stepsize = np.array(stepsize)
     dims = len(stepsize)
     max_halvings = math.frexp(1 / stopratio)[1]
     stencil = RightHandedSimplexStencil(dims, max_halvings)
     gridsize = stepsize / 2.**max_halvings
+
+    if integer_dimensions is not None:
+        integer_dimensions = np.array(integer_dimensions)
+        int_dims = np.zeros(len(x0), dtype=np.bool)
+        int_dims[integer_dimensions] = 1
+        x0[int_dims] = np.round(x0[int_dims])
 
     def to_grid(x):
         return np.round(x / gridsize) * gridsize
@@ -147,7 +157,7 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
     results[cur_point] = None
 
     is_finished = False
-    while not is_finished or running or next_point is not None:
+    while not is_finished or running or next_point is not None or new_point is not None:
         if max_time is not None and time() > end_time:
             is_finished = True
 
@@ -205,9 +215,20 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
                     is_contraction = True
                     break
                 halvings = step.halvings + cur_point.halvings
+                dx = step.point * cur_stepsize
+                if integer_dimensions is not None:
+                    # Round integer steps to the nearest integer away from zero
+                    dx_ints = dx[int_dims]
+                    dx[int_dims] = np.copysign(np.ceil(np.abs(dx_ints)), dx_ints)
+                    trial_point = to_grid(cur_point.point + dx)
+                    trial_point[int_dims] = np.round(trial_point[int_dims])
+                    # Don't reduce the stepsize via the stencil if step is only ints
+                    if step.halvings > 0 and (dx[~int_dims] != 0).sum() == 0:
+                        halvings = cur_point.halvings
+                else:
+                    trial_point = to_grid(cur_point.point + dx)
                 if halvings > max_halvings:
                     continue
-                trial_point = to_grid(cur_point.point + step.point * cur_stepsize)
                 # TODO: check boundary constraints here
                 # if check_feasible is not None and not check_feasible(trial_point):
                 #     continue
