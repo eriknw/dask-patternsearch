@@ -73,7 +73,6 @@ def test_convergence_2d_integers(loop):
             assert best.result == min(x.result for x in results)
 
             best, results = search(client, sphere_p1, x0, stepsize, stopratio=stopratio, integer_dimensions=[0, 1])
-            print(sorted(results, key=lambda x: x.result))
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
