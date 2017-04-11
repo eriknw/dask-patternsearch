@@ -1,6 +1,8 @@
 Dask-PatternSearch
 ==================
 
+|Build Status|
+
 **This project is in alpha phase.**  Please join the discussion and experiment
 with it, but be aware that it may eat your cat.  Better documentation coming soon.
 
@@ -48,3 +50,6 @@ Useful Links
 ------------
 
 http://www.cs.wm.edu/~va/research/sirev.pdf
+
+.. |Build Status| image:: https://api.travis-ci.org/eriknw/dask-patternsearch.svg?branch=master
+   :target: https://travis-ci.org/eriknw/dask-patternsearch
