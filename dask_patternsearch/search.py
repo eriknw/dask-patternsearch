@@ -8,6 +8,7 @@ import numpy as np
 from time import time
 from toolz import concat, take
 
+from .clients import DaskClient, SerialClient
 from .stencil import RightHandedSimplexStencil
 
 
@@ -40,7 +41,7 @@ def randomize_stencil(dims, it):
     return concat(randomize_chunk(i, it) for i in itertools.count(2*dims, dims))
 
 
-def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None, integer_dimensions=None):
+def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None, integer_dimensions=None):
     """ Perform an asynchronous pattern search to minimize a function.
 
     A pattern of trial points is created around the current best point.
@@ -54,8 +55,6 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
 
     Parameters
     ----------
-    client : dask.distributed.Client
-        A client to a ``dask.distributed`` scheduler.
     func : callable
         The objective function to be minimized.  Must be in the form
         ``func(x, *args)`` where ``x`` is a 1-D array and ``args`` is
@@ -67,16 +66,22 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
         be repeatedly halved or doubled as the algorithm proceeds.  It
         is best to choose step sizes larger than the features you want
         the algorithm to step over.
+    client : dask.distributed.Client, optional
+        Typically, a client to a ``dask.distributed`` scheduler should
+        be passed.  If a client is not given, then the algorithm will
+        run serially in the current thread, and the default queue size
+        will be ``4 * len(x0)``.
     args : tuple, optional
         Extra arguments passed to the objective function.
     max_queue_size : int or None, optional
         Maximum number of active tasks to have submitted to the client.
-        Default is the total number of threads plus the total number
-        of worker processes of the the client's cluster.  This default
-        is chosen to maximize occupancy of available cores, but, in
-        general, ``max_queue_size`` does not need to be related to
-        compute resources at all.  Choosing a larger ``max_queue_size``
-        is the best way to improve robustness of the algorithm.
+        Default is the greater of ``4 * len(x0)`` or the total number
+        of threads plus the total number of worker processes of the the
+        client's cluster.  This default is chosen to maximize occupancy
+        of available cores, but, in general, ``max_queue_size`` does
+        not need to be related to compute resources at all.  Choosing a
+        larger ``max_queue_size`` is the best way to improve robustness
+        of the algorithm.
     min_queue_size : int or None, optional
         Minimum number of active tasks to have submitted to the client.
         Default is ``max_queue_size // 2``.
@@ -111,8 +116,10 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
     """
     # bound=None, low_memory_stencil=False
     if max_queue_size is None:
-        ncores = client.ncores()
-        max_queue_size = sum(ncores.values()) + len(ncores)
+        max_queue_size = 4 * len(x0)
+        if client is not None and hasattr(client, 'ncores'):
+            ncores = client.ncores()
+            max_queue_size = max(max_queue_size, sum(ncores.values()) + len(ncores))
     if min_queue_size is None:
         min_queue_size = max(1, max_queue_size // 2)
     if max_stencil_size is None:
@@ -151,8 +158,11 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
     next_cost = None
 
     # Begin from initial point
+    if client is None:
+        client = SerialClient()
+    elif isinstance(client, distributed.Client):
+        client = DaskClient(client)
     future = client.submit(func, cur_point.point, *args)
-    as_completed = distributed.as_completed([future], with_results=True)
     running[future] = cur_point
     results[cur_point] = None
 
@@ -200,7 +210,7 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
                 and (
                     len(running) < min_queue_size
                     or cur_added < min_new_submit
-                    or next_point is None and as_completed.queue.empty()
+                    or next_point is None and not client.has_results()
                 )
             ):
                 try:
@@ -244,7 +254,6 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
                     trial_point.parent = cur_point
                     trial_point.start_time = time()
                     future = client.submit(func, trial_point.point, *args)
-                    as_completed.add(future)
                     running[future] = trial_point
                     results[trial_point] = None
                     cur_added += 1
@@ -264,7 +273,7 @@ def search(client, func, x0, stepsize, args=(), max_queue_size=None, min_queue_s
                 )
             )
 
-            for future, result in as_completed.next_batch(block=block):
+            for future, result in client.next_batch(block=block):
                 point = running.pop(future)
                 point.stop_time = time()
                 if next_point is None:
