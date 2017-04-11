@@ -12,6 +12,7 @@ def sphere(x):
     """Minimum at 0"""
     return x.dot(x)
 
+
 def sphere_p1(x):
     """Minimum at 0.1"""
     x = x - 0.1
@@ -24,35 +25,35 @@ def test_convergence_2d_simple(loop):
             x0 = np.array([10., 15])
             stepsize = np.array([1., 1])
             stopratio = 1e-2
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio)
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere_p1, x0, stepsize, stopratio=stopratio)
+            best, results = search(sphere_p1, x0, stepsize, client=client, stopratio=stopratio)
             assert (np.abs(best.point - 0.1) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_queue_size=20)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, max_queue_size=20)
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_queue_size=1)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, max_queue_size=1)
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, min_new_submit=4)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, min_new_submit=4)
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_tasks=10)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, max_tasks=10)
             assert len(results) == 10
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_stencil_size=4)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, max_stencil_size=4)
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, max_stencil_size=4, min_new_submit=4)
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, max_stencil_size=4, min_new_submit=4)
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
@@ -64,15 +65,29 @@ def test_convergence_2d_integers(loop):
             stepsize = np.array([1., 1])
             stopratio = 1e-2
 
-            best, results = search(client, sphere, x0, stepsize, stopratio=stopratio, integer_dimensions=[0])
+            best, results = search(sphere, x0, stepsize, client=client, stopratio=stopratio, integer_dimensions=[0])
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere_p1, x0, stepsize, stopratio=stopratio, integer_dimensions=[0])
+            best, results = search(sphere_p1, x0, stepsize, client=client, stopratio=stopratio, integer_dimensions=[0])
             assert (np.abs(best.point - np.array([0, 0.1])) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
 
-            best, results = search(client, sphere_p1, x0, stepsize, stopratio=stopratio, integer_dimensions=[0, 1])
+            best, results = search(sphere_p1, x0, stepsize, client=client, stopratio=stopratio, integer_dimensions=[0, 1])
             assert (np.abs(best.point) < 2*stopratio).all()
             assert best.result == min(x.result for x in results)
+
+
+def test_convergence_2d_serial():
+    x0 = np.array([10., 15])
+    stepsize = np.array([1., 1])
+    stopratio = 1e-2
+
+    best, results = search(sphere, x0, stepsize, stopratio=stopratio)
+    assert (np.abs(best.point) < 2*stopratio).all()
+    assert best.result == min(x.result for x in results)
+
+    best, results = search(sphere_p1, x0, stepsize, stopratio=stopratio)
+    assert (np.abs(best.point - 0.1) < 2*stopratio).all()
+    assert best.result == min(x.result for x in results)
 
