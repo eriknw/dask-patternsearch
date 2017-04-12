@@ -288,7 +288,7 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None,
                     trial_point.start_time = time()
                     submit_point(trial_point)
                     cur_added += 1
-                    if max_tasks is not None and len(results) >= max_tasks:
+                    if max_tasks is not None and len(results) // (batchsize or 1) >= max_tasks:
                         is_finished = True
                         break
             if is_contraction:

@@ -81,6 +81,11 @@ def test_convergence_2d_simple(loop):
             assert best.result == min(x.result for x in results)
             assert len(results) % 5 == 0
 
+            best, results = search(sphere_vectorized, x0, stepsize, client=client, stopratio=stopratio,
+                                   batchsize=5, max_tasks=2)
+            assert best.result == min(x.result for x in results)
+            assert len(results) == 10
+
 
 def test_convergence_2d_integers(loop):
     with cluster() as (s, [a, b]):
