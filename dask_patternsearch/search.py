@@ -41,7 +41,14 @@ def randomize_stencil(dims, it):
     return concat(randomize_chunk(i, it) for i in itertools.count(2*dims, dims))
 
 
-def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_queue_size=None, min_new_submit=0, randomize=True, max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None, integer_dimensions=None):
+def run_batch(func, points, args):
+    return tuple(func(point, *args) for point in points)
+
+
+def search(func, x0, stepsize, client=None, args=(), max_queue_size=None,
+           min_queue_size=None, min_new_submit=0, randomize=True,
+           max_stencil_size=None, stopratio=0.01, max_tasks=None, max_time=None,
+           integer_dimensions=None, batchsize=None, vectorize=False):
     """ Perform an asynchronous pattern search to minimize a function.
 
     A pattern of trial points is created around the current best point.
@@ -70,12 +77,12 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
         Typically, a client to a ``dask.distributed`` scheduler should
         be passed.  If a client is not given, then the algorithm will
         run serially in the current thread, and the default queue size
-        will be ``4 * len(x0)``.
+        will be ``3 * len(x0)``.
     args : tuple, optional
         Extra arguments passed to the objective function.
     max_queue_size : int or None, optional
         Maximum number of active tasks to have submitted to the client.
-        Default is the greater of ``4 * len(x0)`` or the total number
+        Default is the greater of ``3 * len(x0)`` or the total number
         of threads plus the total number of worker processes of the the
         client's cluster.  This default is chosen to maximize occupancy
         of available cores, but, in general, ``max_queue_size`` does
@@ -105,6 +112,14 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
         seconds have passed.  Default unlimited.
     integer_dimensions : array-like or None, optional
         1-D array; specify the indices of integer dimensions.
+    batchsize : int or None, optional
+        Evaluate this many trial points in a single task.  This is useful
+        when the objective function is fast or vectorized.
+    vectorize : bool
+        Set to True if the objective function is vectorized.  This means
+        it accepts a 2-D array of points and returns a 1-D array of
+        results.  This can dramatically improve performance.
+        ``batchsize`` must be given if ``vectorize`` is True.
 
     Returns
     -------
@@ -116,7 +131,9 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
     """
     # bound=None, low_memory_stencil=False
     if max_queue_size is None:
-        max_queue_size = 4 * len(x0)
+        max_queue_size = 3 * len(x0)
+        if batchsize is not None:
+            max_queue_size = max_queue_size // batchsize + 1
         if client is not None and hasattr(client, 'ncores'):
             ncores = client.ncores()
             max_queue_size = max(max_queue_size, sum(ncores.values()) + len(ncores))
@@ -124,6 +141,8 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
         min_queue_size = max(1, max_queue_size // 2)
     if max_stencil_size is None:
         max_stencil_size = 1e9
+    if vectorize and batchsize is None:
+        raise ValueError('batchsize argument must be given if vectorize is True')
     x0 = np.array(x0)
     stepsize = np.array(stepsize)
     dims = len(stepsize)
@@ -150,22 +169,38 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
 
     if max_time is not None:
         end_time = time() + max_time
-    results = {}
+    current_batch = []
     running = {}
     processing = []
+    results = {}
     contract_conditions = set()
     next_point = None
     next_cost = None
 
-    # Begin from initial point
     if client is None:
         client = SerialClient()
     elif isinstance(client, distributed.Client):
         client = DaskClient(client)
-    future = client.submit(func, cur_point.point, *args)
-    running[future] = cur_point
-    results[cur_point] = None
 
+    if batchsize is None:
+        def submit_point(point):
+            results[point] = None
+            future = client.submit(func, point.point, *args)
+            running[future] = point
+    else:
+        def submit_point(point):
+            results[point] = None
+            current_batch.append(point)
+            if len(current_batch) >= batchsize:
+                points = (p.point for p in current_batch)
+                if vectorize:
+                    future = client.submit(func, np.stack(points), *args)
+                else:
+                    future = client.submit(run_batch, func, tuple(points), args)
+                running[future] = tuple(current_batch)
+                current_batch[:] = []
+
+    submit_point(cur_point)
     is_finished = False
     while not is_finished or running or next_point is not None or new_point is not None:
         if max_time is not None and time() > end_time:
@@ -253,11 +288,9 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
                 if has_result is False:
                     trial_point.parent = cur_point
                     trial_point.start_time = time()
-                    future = client.submit(func, trial_point.point, *args)
-                    running[future] = trial_point
-                    results[trial_point] = None
+                    submit_point(trial_point)
                     cur_added += 1
-                    if max_tasks is not None and len(results) >= max_tasks:
+                    if max_tasks is not None and len(results) // (batchsize or 1) >= max_tasks:
                         is_finished = True
                         break
             if is_contraction:
@@ -272,19 +305,23 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
                     and (is_finished or stencil_index >= max_stencil_size)
                 )
             )
-
             for future, result in client.next_batch(block=block):
-                point = running.pop(future)
-                point.stop_time = time()
-                if next_point is None:
-                    next_point = point
-                    next_cost = result
-                elif result < next_cost:
-                    processing.append((next_point, next_cost))
-                    next_point = point
-                    next_cost = result
-                else:
-                    processing.append((point, result))
+                stop_time = time()
+                points = running.pop(future)
+                if batchsize is None:
+                    points = [points]
+                    result = [result]
+                for point, cost in zip(points, result):
+                    point.stop_time = stop_time
+                    if next_point is None:
+                        next_point = point
+                        next_cost = cost
+                    elif cost < next_cost:
+                        processing.append((next_point, next_cost))
+                        next_point = point
+                        next_cost = cost
+                    else:
+                        processing.append((point, cost))
 
         # Process all results
         # Be greedy: the new point will be the result with the lowest cost.
@@ -320,5 +357,7 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None, min_qu
             # Nothing running, nothing to process, and nothing to submit, so contract
             is_contraction = True
 
+    for point in current_batch:
+        results.pop(point)
     return cur_point, results
 
