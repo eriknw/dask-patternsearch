@@ -77,12 +77,12 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None,
         Typically, a client to a ``dask.distributed`` scheduler should
         be passed.  If a client is not given, then the algorithm will
         run serially in the current thread, and the default queue size
-        will be ``4 * len(x0)``.
+        will be ``3 * len(x0)``.
     args : tuple, optional
         Extra arguments passed to the objective function.
     max_queue_size : int or None, optional
         Maximum number of active tasks to have submitted to the client.
-        Default is the greater of ``4 * len(x0)`` or the total number
+        Default is the greater of ``3 * len(x0)`` or the total number
         of threads plus the total number of worker processes of the the
         client's cluster.  This default is chosen to maximize occupancy
         of available cores, but, in general, ``max_queue_size`` does
@@ -131,7 +131,9 @@ def search(func, x0, stepsize, client=None, args=(), max_queue_size=None,
     """
     # bound=None, low_memory_stencil=False
     if max_queue_size is None:
-        max_queue_size = 4 * len(x0)
+        max_queue_size = 3 * len(x0)
+        if batchsize is not None:
+            max_queue_size = max_queue_size // batchsize + 1
         if client is not None and hasattr(client, 'ncores'):
             ncores = client.ncores()
             max_queue_size = max(max_queue_size, sum(ncores.values()) + len(ncores))
